@@ -24,7 +24,8 @@ htmlcov/
 
 # Project artifacts (generated / large)
 signatures/
-models/
+models/weights/
+models/w2vbert_utils/
 pretrained_models/
 
 # Audio recordings / user-generated data (requested)
