@@ -40,6 +40,7 @@ def fix_torchaudio_compat():
 # ─── Model Sabitleri ──────────────────────────────────────────────────────────
 MODEL_ECAPA = "ecapa-tdnn"
 MODEL_ERES2NET = "eres2net"
+MODEL_W2VBERT = "w2v-bert-2.0"
 
 ERES2NET_MODEL_ID = "iic/speech_eres2net_sv_zh-cn_16k-common"
 ERES2NET_MODEL_REVISION = "v1.0.5"
@@ -48,7 +49,11 @@ ERES2NET_MODEL_REVISION = "v1.0.5"
 ERES2NET_THRESHOLD = 0.55         # pipeline'ın 0.365'i two-stage içi kullanım için uygun değil
 ERES2NET_HIGH_THRESHOLD = 0.70
 
-# ERes2Net için enrollment parametreleri (ECAPA'dan farklı: daha uzun, daha fazla segment)
+# w2v-BERT 2.0 değerleri
+W2V_BERT_THRESHOLD = 0.65
+W2V_BERT_HIGH_THRESHOLD = 0.80
+
+# ERes2Net / W2V-BERT için enrollment parametreleri
 ERES2NET_ENROLLMENT_SEGMENTS = 5  # 3 → 5
 ERES2NET_SEGMENT_DURATION = 15    # 10s → 15s
 ERES2NET_MIN_SPEECH_DURATION = 3.0  # Minimum net konuşma süresi (saniye)

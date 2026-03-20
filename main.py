@@ -17,11 +17,14 @@ from config.settings import (
     HIGH_CONFIDENCE_THRESHOLD,
     ERES2NET_THRESHOLD,
     ERES2NET_HIGH_THRESHOLD,
+    W2V_BERT_THRESHOLD,
+    W2V_BERT_HIGH_THRESHOLD,
     ERES2NET_ENROLLMENT_SEGMENTS,
     ERES2NET_SEGMENT_DURATION,
     ERES2NET_MIN_SPEECH_DURATION,
     MODEL_ECAPA,
     MODEL_ERES2NET,
+    MODEL_W2VBERT,
 )
 fix_torchaudio_compat()
 
@@ -93,24 +96,35 @@ def get_encoder(model_name: str):
     if model_name == MODEL_ECAPA:
         from models.voice_encoder import VoiceEncoder
         return VoiceEncoder()
-    else:
+    elif model_name == MODEL_ERES2NET:
         from models.eres2net_encoder import ERes2NetEncoder
         return ERes2NetEncoder()
+    else:
+        from models.w2vbert_encoder import W2vBertEncoder
+        return W2vBertEncoder()
 
 
 def get_enrollment_params(model_name: str) -> tuple:
     """(n_segments, segment_duration) modelye göre döndür."""
-    if model_name == MODEL_ERES2NET:
+    if model_name in [MODEL_ERES2NET, MODEL_W2VBERT]:
         return ERES2NET_ENROLLMENT_SEGMENTS, ERES2NET_SEGMENT_DURATION
     return ENROLLMENT_SEGMENTS, ENROLLMENT_DURATION
 
 
 def get_threshold(model_name: str) -> float:
-    return ERES2NET_THRESHOLD if model_name == MODEL_ERES2NET else VERIFICATION_THRESHOLD
+    if model_name == MODEL_ERES2NET:
+        return ERES2NET_THRESHOLD
+    elif model_name == MODEL_W2VBERT:
+        return W2V_BERT_THRESHOLD
+    return VERIFICATION_THRESHOLD
 
 
 def get_high_threshold(model_name: str) -> float:
-    return ERES2NET_HIGH_THRESHOLD if model_name == MODEL_ERES2NET else HIGH_CONFIDENCE_THRESHOLD
+    if model_name == MODEL_ERES2NET:
+        return ERES2NET_HIGH_THRESHOLD
+    elif model_name == MODEL_W2VBERT:
+        return W2V_BERT_HIGH_THRESHOLD
+    return HIGH_CONFIDENCE_THRESHOLD
 
 
 def interpret_score(encoder, score: float) -> str:
@@ -123,16 +137,19 @@ def select_model() -> str:
     print("   🎤 SES İMZASI SİSTEMİ")
     print("=" * 60)
     print("\n   Model seçin:")
-    print("   [1] ECAPA-TDNN  — SpeechBrain, VoxCeleb (192-dim)")
-    print("   [2] ERes2Net    — ModelScope, 200k konuşmacı (daha güçlü)")
+    print("   [1] ECAPA-TDNN   — SpeechBrain, VoxCeleb (192-dim)")
+    print("   [2] ERes2Net     — ModelScope, 200k konuşmacı (daha güçlü)")
+    print("   [3] w2v-BERT 2.0 — Meta, 600M param, EER 0.12% (En güçlü)")
     print("   [0] Çıkış")
 
     while True:
-        choice = input("\n   Seçiminiz [1/2]: ").strip()
+        choice = input("\n   Seçiminiz [1/2/3 veya 0]: ").strip()
         if choice == '1':
             return MODEL_ECAPA
         elif choice == '2':
             return MODEL_ERES2NET
+        elif choice == '3':
+            return MODEL_W2VBERT
         elif choice == '0':
             sys.exit(0)
         else:
@@ -140,7 +157,7 @@ def select_model() -> str:
 
 
 def banner(model_name: str):
-    label = "ECAPA-TDNN (SpeechBrain)" if model_name == MODEL_ECAPA else "ERes2Net (ModelScope)"
+    label = "ECAPA-TDNN (SpeechBrain)" if model_name == MODEL_ECAPA else ("ERes2Net (ModelScope)" if model_name == MODEL_ERES2NET else "w2v-BERT 2.0 (Meta)")
     thr = get_threshold(model_name)
     print("\n" + "=" * 60)
     print(f"   🎤 SES İMZASI SİSTEMİ")
@@ -150,7 +167,7 @@ def banner(model_name: str):
 
 
 def menu(model_name: str) -> str:
-    label = "ECAPA-TDNN" if model_name == MODEL_ECAPA else "ERes2Net"
+    label = "ECAPA-TDNN" if model_name == MODEL_ECAPA else ("ERes2Net" if model_name == MODEL_ERES2NET else "w2v-BERT 2.0")
     print(f"\n   [1] 🆕  Yeni ses imzası kaydet  ({label})")
     print(f"   [2] 🔍  Ses doğrulama testi     ({label})")
     print("   [3] 📋  Kayıtlı kullanıcıları listele")
@@ -181,8 +198,9 @@ def do_enroll(recorder: AudioRecorder, encoder, store: SignatureStore, model_nam
 
     n_segments, seg_duration = get_enrollment_params(model_name)
 
-    if model_name == MODEL_ERES2NET:
-        print(f"\n   ℹ️  ERes2Net modu: {n_segments} segment × {seg_duration}s")
+    if model_name in [MODEL_ERES2NET, MODEL_W2VBERT]:
+        c_name = "ERes2Net" if model_name == MODEL_ERES2NET else "w2v-BERT 2.0"
+        print(f"\n   ℹ️  {c_name} modu: {n_segments} segment × {seg_duration}s")
         print(f"   Daha fazla ve daha uzun kayıt → daha güçlü ses imzası")
 
     input("Enter'a basarak kayda başlayın...")
@@ -205,8 +223,8 @@ def do_enroll(recorder: AudioRecorder, encoder, store: SignatureStore, model_nam
             print("❌ Kayıt başarısız. İptal edildi.")
             return
 
-        # Konuşma süresini göster (ERes2Net için önemli)
-        if model_name == MODEL_ERES2NET:
+        # Konuşma süresini göster (ERes2Net ve W2v-BERT için önemli)
+        if model_name in [MODEL_ERES2NET, MODEL_W2VBERT]:
             from utils.audio_utils import trim_silence_vad
             _, speech_dur = trim_silence_vad(audio)
             print(f"   🗣️  Net konuşma süresi: {speech_dur:.1f}s", end="")
