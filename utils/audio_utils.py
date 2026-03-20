@@ -139,3 +139,44 @@ def trim_silence(audio: np.ndarray, threshold: float = 0.02,
     end = min(len(audio), (active_frames[-1] + 2) * frame_length)
     
     return audio[start:end]
+
+
+def trim_silence_vad(audio: np.ndarray, frame_length: int = 512,
+                     energy_percentile: float = 15.0,
+                     sample_rate: int = 16000) -> tuple:
+    """
+    Gelişmiş VAD (Voice Activity Detection) tabanlı sessizlik kırpma.
+    ERes2Net gibi modeller için önerilen ön işleme adımı.
+
+    Adaptif eşik: frame enerjilerinin percentile değerini kullanır,
+    böylece ortam gürültüsüne karşı daha dayanıklı olur.
+
+    Returns:
+        (trimmed_audio, speech_duration_seconds)
+    """
+    n_frames = len(audio) // frame_length
+    if n_frames == 0:
+        return audio, len(audio) / sample_rate
+
+    energies = np.array([
+        np.mean(audio[i * frame_length:(i + 1) * frame_length] ** 2)
+        for i in range(n_frames)
+    ])
+
+    # Adaptif eşik: en yüksek enerjinin belirli bir yüzdesini kullan
+    max_energy = np.max(energies)
+    threshold = max_energy * (energy_percentile / 100.0)
+
+    active_frames = np.where(energies > threshold)[0]
+
+    if len(active_frames) == 0:
+        return audio, 0.0
+
+    start = max(0, active_frames[0] * frame_length - frame_length // 2)
+    end = min(len(audio), (active_frames[-1] + 2) * frame_length)
+
+    trimmed = audio[start:end]
+    speech_duration = len(trimmed) / sample_rate
+
+    return trimmed, speech_duration
+

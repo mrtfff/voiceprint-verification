@@ -1,11 +1,7 @@
 """
 Ses İmzası Sistemi - Ana Menü
 
-Tüm işlemleri tek bir yerden yönetin:
-  1. Yeni ses imzası kaydet (Enrollment)
-  2. Ses doğrulama testi (Verification)
-  3. Kayıtlı kullanıcıları listele
-  4. Kullanıcı sil
+Model seçimi: ECAPA-TDNN (SpeechBrain) veya ERes2Net (ModelScope)
 """
 import sys
 import os
@@ -16,15 +12,20 @@ from config.settings import (
     fix_torchaudio_compat,
     ENROLLMENT_DURATION,
     ENROLLMENT_SEGMENTS,
-    EMBEDDING_DIM,
     VERIFICATION_DURATION,
     VERIFICATION_THRESHOLD,
     HIGH_CONFIDENCE_THRESHOLD,
+    ERES2NET_THRESHOLD,
+    ERES2NET_HIGH_THRESHOLD,
+    ERES2NET_ENROLLMENT_SEGMENTS,
+    ERES2NET_SEGMENT_DURATION,
+    ERES2NET_MIN_SPEECH_DURATION,
+    MODEL_ECAPA,
+    MODEL_ERES2NET,
 )
 fix_torchaudio_compat()
 
 from utils.audio_recorder import AudioRecorder
-from models.voice_encoder import VoiceEncoder
 from models.signature_store import SignatureStore
 
 
@@ -60,27 +61,107 @@ ENROLLMENT_PROMPTS = [
     '      Gökyüzünün mavisinde, süzülen beyaz bir bulut gibiyim.\n'
     '      Sert rüzgarlar esse de, yolumdan asla dönmem.\n'
     '      Dokuz, on ve bitti!"',
+
+    "4️⃣  Haber spikeri veya belgesel seslendirmeni gibi ciddi, otoriter\n"
+    "     ve net bir ton kullanın. Kelimelerin üzerine basarak okuyun.\n\n"
+    '     "Teknolojinin hızla geliştiği bu yeni çağda, yapay zeka\n'
+    '      sistemleri hayatımızın her alanına entegre olmaya devam\n'
+    '      ediyor. Veri analizi, ses tanıma ve makine öğrenmesi gibi\n'
+    '      alanlarda katedilen mesafe, geleceğin dijital dünyasını\n'
+    '      bugünden şekillendiriyor. Karmaşık algoritmalar, insan\n'
+    '      sesini en ince ayrıntısına kadar analiz ederek gerçeğe en\n'
+    '      yakın sonuçları üretmeyi hedefliyor."\n\n'
+    "     Tüyo: Kendinden emin, net bir tonla. Kelimeler arası hafif\n"
+    "     duraksamalar yapabilirsiniz.",
+
+    "5️⃣  Düşünceli, derin ve sakin bir ton. Sanki birine çok önemli\n"
+    "     bir tavsiye veriyormuşsunuz gibi yavaş okuyun.\n\n"
+    '     "Zaman, bazen çok hızlı akıp giden bir nehir, bazen de\n'
+    '      durup dinlendiğimiz sakin bir liman gibidir. Önemli olan\n'
+    '      bu koşturmacanın içinde kendi sesimizi duyabilmek ve\n'
+    '      geride anlamlı izler bırakabilmektir. Her kelime, her\n'
+    '      cümle aslında ruhumuzun bir yansımasıdır. Ve işte şimdi,\n'
+    '      bu uzun yolculuğun sonuna geliyoruz."\n\n'
+    "     Tüyo: Çok yavaş okuyun. Cümle aralarında 1-2 saniye bekleyin\n"
+    '     ve nefes alışverişinizin doğal duyulmasına izin verin.',
 ]
 
 
-def banner():
+# ─── Yardımcı fonksiyonlar ────────────────────────────────────────────────────
+def get_encoder(model_name: str):
+    """Seçilen modele göre encoder yükle."""
+    if model_name == MODEL_ECAPA:
+        from models.voice_encoder import VoiceEncoder
+        return VoiceEncoder()
+    else:
+        from models.eres2net_encoder import ERes2NetEncoder
+        return ERes2NetEncoder()
+
+
+def get_enrollment_params(model_name: str) -> tuple:
+    """(n_segments, segment_duration) modelye göre döndür."""
+    if model_name == MODEL_ERES2NET:
+        return ERES2NET_ENROLLMENT_SEGMENTS, ERES2NET_SEGMENT_DURATION
+    return ENROLLMENT_SEGMENTS, ENROLLMENT_DURATION
+
+
+def get_threshold(model_name: str) -> float:
+    return ERES2NET_THRESHOLD if model_name == MODEL_ERES2NET else VERIFICATION_THRESHOLD
+
+
+def get_high_threshold(model_name: str) -> float:
+    return ERES2NET_HIGH_THRESHOLD if model_name == MODEL_ERES2NET else HIGH_CONFIDENCE_THRESHOLD
+
+
+def interpret_score(encoder, score: float) -> str:
+    return encoder.interpret_score(score)
+
+
+# ─── Model Seçim Menüsü ───────────────────────────────────────────────────────
+def select_model() -> str:
     print("\n" + "=" * 60)
     print("   🎤 SES İMZASI SİSTEMİ")
-    print("   ECAPA-TDNN | 192-dim Voiceprint")
+    print("=" * 60)
+    print("\n   Model seçin:")
+    print("   [1] ECAPA-TDNN  — SpeechBrain, VoxCeleb (192-dim)")
+    print("   [2] ERes2Net    — ModelScope, 200k konuşmacı (daha güçlü)")
+    print("   [0] Çıkış")
+
+    while True:
+        choice = input("\n   Seçiminiz [1/2]: ").strip()
+        if choice == '1':
+            return MODEL_ECAPA
+        elif choice == '2':
+            return MODEL_ERES2NET
+        elif choice == '0':
+            sys.exit(0)
+        else:
+            print("   ❌ Geçersiz seçim, tekrar deneyin.")
+
+
+def banner(model_name: str):
+    label = "ECAPA-TDNN (SpeechBrain)" if model_name == MODEL_ECAPA else "ERes2Net (ModelScope)"
+    thr = get_threshold(model_name)
+    print("\n" + "=" * 60)
+    print(f"   🎤 SES İMZASI SİSTEMİ")
+    print(f"   Model   : {label}")
+    print(f"   Eşik    : {thr}")
     print("=" * 60)
 
 
-def menu():
-    print("\n   [1] 🆕  Yeni ses imzası kaydet")
-    print("   [2] 🔍  Ses doğrulama testi")
+def menu(model_name: str) -> str:
+    label = "ECAPA-TDNN" if model_name == MODEL_ECAPA else "ERes2Net"
+    print(f"\n   [1] 🆕  Yeni ses imzası kaydet  ({label})")
+    print(f"   [2] 🔍  Ses doğrulama testi     ({label})")
     print("   [3] 📋  Kayıtlı kullanıcıları listele")
     print("   [4] 🗑️  Kullanıcı sil")
+    print("   [5] 🔄  Model değiştir")
     print("   [0] 🚪  Çıkış")
     return input("\n   Seçiminiz: ").strip()
 
 
 # ─── 1. ENROLLMENT ───────────────────────────────────────────────────────────
-def do_enroll(recorder: AudioRecorder, encoder: VoiceEncoder, store: SignatureStore):
+def do_enroll(recorder: AudioRecorder, encoder, store: SignatureStore, model_name: str):
     print(f"\n{'=' * 60}")
     print("   🆕 YENİ SES İMZASI KAYDI")
     print(f"{'=' * 60}")
@@ -91,38 +172,53 @@ def do_enroll(recorder: AudioRecorder, encoder: VoiceEncoder, store: SignatureSt
         return
 
     if store.exists(user_id):
-        overwrite = input(f"⚠️  '{user_id}' zaten kayıtlı. Üzerine yazmak ister misiniz? [e/H]: ").strip()
+        overwrite = input(f"⚠️  '{user_id}' bu model için zaten kayıtlı. Üzerine yazmak ister misiniz? [e/H]: ").strip()
         if overwrite.lower() != 'e':
             print("İptal edildi.")
             return
 
     recorder.list_devices()
+
+    n_segments, seg_duration = get_enrollment_params(model_name)
+
+    if model_name == MODEL_ERES2NET:
+        print(f"\n   ℹ️  ERes2Net modu: {n_segments} segment × {seg_duration}s")
+        print(f"   Daha fazla ve daha uzun kayıt → daha güçlü ses imzası")
+
     input("Enter'a basarak kayda başlayın...")
 
-    # Segment kayıtları
     segments = []
-    segment_wavs_dir = os.path.join("signatures", user_id + "_segments")
+    segment_wavs_dir = os.path.join("signatures", store.model_name, user_id + "_segments")
     os.makedirs(segment_wavs_dir, exist_ok=True)
 
-    for i in range(ENROLLMENT_SEGMENTS):
+    for i in range(n_segments):
         print(f"\n{'─' * 50}")
-        print(f"📝 Segment {i+1}/{ENROLLMENT_SEGMENTS}")
+        print(f"📝 Segment {i+1}/{n_segments}")
         print(ENROLLMENT_PROMPTS[i] if i < len(ENROLLMENT_PROMPTS) else "Herhangi bir şey konuşun.")
         print(f"\n{SEGMENT_NOTE}")
-        print(f"\n   (Süre: {ENROLLMENT_DURATION} saniye)")
+        print(f"\n   (Süre: {seg_duration} saniye)")
 
         input("   Hazır olduğunuzda Enter'a basın...")
-        audio = recorder.record_with_quality_check(ENROLLMENT_DURATION)
+        audio = recorder.record_with_quality_check(seg_duration)
 
         if audio is None:
             print("❌ Kayıt başarısız. İptal edildi.")
             return
 
+        # Konuşma süresini göster (ERes2Net için önemli)
+        if model_name == MODEL_ERES2NET:
+            from utils.audio_utils import trim_silence_vad
+            _, speech_dur = trim_silence_vad(audio)
+            print(f"   🗣️  Net konuşma süresi: {speech_dur:.1f}s", end="")
+            if speech_dur < ERES2NET_MIN_SPEECH_DURATION:
+                print(f" ⚠️ (minimum {ERES2NET_MIN_SPEECH_DURATION}s önerilen)")
+            else:
+                print(" ✅")
+
         segments.append(audio)
         wav_path = os.path.join(segment_wavs_dir, f"segment_{i+1}.wav")
         recorder.save_wav(audio, wav_path)
 
-    # Embedding çıkar ve kaydet
     print(f"\n{'─' * 50}")
     print("🧠 Ses imzası çıkarılıyor...")
 
@@ -138,22 +234,21 @@ def do_enroll(recorder: AudioRecorder, encoder: VoiceEncoder, store: SignatureSt
     }
 
     save_path = store.save(user_id, embedding, metadata)
-
     print(f"\n💾 Ses imzası kaydedildi: {save_path}")
     print(f"   Kullanıcı    : {user_id}")
-    print(f"   Segmentler   : {len(segments)} x {ENROLLMENT_DURATION}s")
-    print(f"   İmza boyutu  : {EMBEDDING_DIM} boyut")
+    print(f"   Model        : {store.model_name}")
+    print(f"   İmza boyutu  : {embedding.shape[0]} boyut")
 
 
 # ─── 2. VERIFICATION ─────────────────────────────────────────────────────────
-def do_verify(recorder: AudioRecorder, encoder: VoiceEncoder, store: SignatureStore):
+def do_verify(recorder: AudioRecorder, encoder, store: SignatureStore, model_name: str):
     print(f"\n{'=' * 60}")
     print("   🔍 SES DOĞRULAMA TESTİ")
     print(f"{'=' * 60}")
 
     users = store.list_users()
     if not users:
-        print("\n❌ Henüz kayıtlı kullanıcı yok. Önce kayıt yapın.")
+        print("\n❌ Bu model için kayıtlı kullanıcı yok. Önce kayıt yapın.")
         return
 
     print("\n📋 Kayıtlı kullanıcılar:")
@@ -162,7 +257,6 @@ def do_verify(recorder: AudioRecorder, encoder: VoiceEncoder, store: SignatureSt
 
     choice = input("\n👤 Doğrulanacak kullanıcı adı veya numarası: ").strip()
 
-    # Numara ile seçim
     try:
         idx = int(choice) - 1
         if 0 <= idx < len(users):
@@ -174,13 +268,14 @@ def do_verify(recorder: AudioRecorder, encoder: VoiceEncoder, store: SignatureSt
         user_id = choice
 
     if not store.exists(user_id):
-        print(f"❌ '{user_id}' adında kayıtlı kullanıcı bulunamadı.")
+        print(f"❌ '{user_id}' bulunamadı.")
         return
 
     saved_embedding, profile = store.load(user_id)
-    print(f"\n✅ '{user_id}' imzası yüklendi.")
+    threshold = get_threshold(model_name)
+    high_threshold = get_high_threshold(model_name)
+    print(f"\n✅ '{user_id}' imzası yüklendi. (boyut: {saved_embedding.shape[0]})")
 
-    # Test döngüsü
     while True:
         print(f"\n{'─' * 50}")
         print(f"🎙️ {VERIFICATION_DURATION} saniyelik test kaydı alınacak.")
@@ -192,19 +287,19 @@ def do_verify(recorder: AudioRecorder, encoder: VoiceEncoder, store: SignatureSt
             continue
 
         test_embedding = encoder.extract_embedding(test_audio)
-        score = VoiceEncoder.cosine_similarity(saved_embedding, test_embedding)
-        interpretation = VoiceEncoder.interpret_score(score)
+        score = encoder.cosine_similarity(saved_embedding, test_embedding)
+        interpretation = encoder.interpret_score(score)
 
         print(f"\n{'─' * 50}")
         print(f"📊 SONUÇ")
         print(f"   Karşılaştırılan : {user_id}")
         print(f"   Benzerlik skoru : {score:.4f}")
         print(f"   Yorum           : {interpretation}")
-        print(f"   Eşik değeri     : {VERIFICATION_THRESHOLD}")
+        print(f"   Eşik değeri     : {threshold}")
 
-        if score >= VERIFICATION_THRESHOLD:
+        if score >= threshold:
             print(f"\n   ✅ DOĞRULANDI — Bu ses '{user_id}' kişisine ait!")
-            if score >= HIGH_CONFIDENCE_THRESHOLD:
+            if score >= high_threshold:
                 print(f"   🌟 Yüksek güvenle eşleşme!")
         else:
             print(f"\n   ❌ DOĞRULANAMADI — Bu ses '{user_id}' kişisine ait değil.")
@@ -217,19 +312,19 @@ def do_verify(recorder: AudioRecorder, encoder: VoiceEncoder, store: SignatureSt
 # ─── 3. LIST USERS ────────────────────────────────────────────────────────────
 def do_list(store: SignatureStore):
     print(f"\n{'=' * 60}")
-    print("   📋 KAYITLI KULLANICILAR")
+    print(f"   📋 KAYITLI KULLANICILAR ({store.model_name})")
     print(f"{'=' * 60}")
 
     users = store.list_users()
     if not users:
-        print("\n   Henüz kayıtlı kullanıcı yok.")
+        print("\n   Bu model için henüz kayıtlı kullanıcı yok.")
         return
 
     for user in users:
         print(f"\n   👤 {user['user_id']}")
-        print(f"      Kayıt tarihi  : {user.get('created_at', 'N/A')[:19]}")
+        print(f"      Kayıt tarihi   : {user.get('created_at', 'N/A')[:19]}")
         print(f"      Segment sayısı : {user.get('segment_count', 'N/A')}")
-        print(f"      Model          : {user.get('model', 'N/A')}")
+        print(f"      Embedding dim  : {user.get('embedding_dim', 'N/A')}")
 
     print(f"\n   Toplam: {len(users)} kullanıcı")
 
@@ -237,12 +332,12 @@ def do_list(store: SignatureStore):
 # ─── 4. DELETE USER ───────────────────────────────────────────────────────────
 def do_delete(store: SignatureStore):
     print(f"\n{'=' * 60}")
-    print("   🗑️ KULLANICI SİL")
+    print(f"   🗑️ KULLANICI SİL ({store.model_name})")
     print(f"{'=' * 60}")
 
     users = store.list_users()
     if not users:
-        print("\n   Henüz kayıtlı kullanıcı yok.")
+        print("\n   Bu model için henüz kayıtlı kullanıcı yok.")
         return
 
     print("\n📋 Kayıtlı kullanıcılar:")
@@ -275,30 +370,35 @@ def do_delete(store: SignatureStore):
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 def main():
-    banner()
-
     recorder = AudioRecorder()
-    store = SignatureStore()
-    encoder = None  # Lazy load — sadece gerekince yükle
+
+    model_name = select_model()
+    encoder = None
 
     while True:
-        choice = menu()
+        banner(model_name)
+        store = SignatureStore(model_name=model_name)
+        choice = menu(model_name)
 
         if choice == '1':
             if encoder is None:
-                encoder = VoiceEncoder()
-            do_enroll(recorder, encoder, store)
+                encoder = get_encoder(model_name)
+            do_enroll(recorder, encoder, store, model_name)
 
         elif choice == '2':
             if encoder is None:
-                encoder = VoiceEncoder()
-            do_verify(recorder, encoder, store)
+                encoder = get_encoder(model_name)
+            do_verify(recorder, encoder, store, model_name)
 
         elif choice == '3':
             do_list(store)
 
         elif choice == '4':
             do_delete(store)
+
+        elif choice == '5':
+            model_name = select_model()
+            encoder = None  # Yeni model için sıfırla
 
         elif choice == '0':
             print("\n👋 Güle güle!")
